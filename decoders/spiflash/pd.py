@@ -90,8 +90,8 @@ class Decoder(srd.Decoder):
         ('warnings', 'Warnings', (L + 2,)),
     )
     options = (
-        {'id': 'chip', 'desc': 'Chip', 'default': tuple(chips.keys())[0],
-            'values': tuple(chips.keys())},
+        {'id': 'chip', 'desc': 'Chip', 'default': tuple(sorted(chips.keys()))[0],
+            'values': tuple(sorted(chips.keys()))},
         {'id': 'format', 'desc': 'Data format', 'default': 'hex',
             'values': ('hex', 'ascii')},
     )
