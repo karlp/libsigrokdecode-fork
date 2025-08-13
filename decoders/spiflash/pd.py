@@ -94,6 +94,9 @@ class Decoder(srd.Decoder):
             'values': tuple(sorted(chips.keys()))},
         {'id': 'format', 'desc': 'Data format', 'default': 'hex',
             'values': ('hex', 'ascii')},
+        # Some/many flash parts can switch to different addressing modes
+        {'id': 'addr_size', 'desc': 'Count of address bytes (-1 for auto/detect)', 'default': -1,
+            'values': (-1, 2, 3, 4)},
     )
 
     def __init__(self):
@@ -126,6 +129,18 @@ class Decoder(srd.Decoder):
         self.out_ann = self.register(srd.OUTPUT_ANN)
         self.chip = chips[self.options['chip']]
         self.vendor = self.options['chip'].split('_')[0]
+        # Does the chip have a forced, fixed size?
+        chip_addr_size = self.chip.get('addr_size')
+        opt_addr_size = self.options['addr_size']
+        if opt_addr_size == -1 and chip_addr_size is None:
+            self.addr_size = 3
+        elif chip_addr_size is not None:
+            self.addr_size = chip_addr_size
+        else:
+            self.addr_size = opt_addr_size
+
+        self.addr_chunks = tuple((n for n in range(2, 2 + self.addr_size)))
+        self.data_offs = self.addr_chunks[-1] + 1
 
     def putx(self, data):
         # Simplification, most annotations span exactly one SPI byte/packet.
@@ -159,15 +174,16 @@ class Decoder(srd.Decoder):
         self.addr = 0
 
     def emit_addr_bytes(self, mosi):
-        self.addr |= (mosi << ((4 - self.cmdstate) * 8))
-        b = ((3 - (self.cmdstate - 2)) * 8) - 1
+        last_addr = self.addr_chunks[-1]
+        self.addr |= (mosi << ((last_addr - self.cmdstate) * 8))
+        b = (((last_addr-1) - (self.cmdstate - 2)) * 8) - 1
         self.putx([Ann.BIT,
             ['Address bits %d..%d: 0x%02x' % (b, b - 7, mosi),
              'Addr bits %d..%d: 0x%02x' % (b, b - 7, mosi),
              'Addr bits %d..%d' % (b, b - 7), 'A%d..A%d' % (b, b - 7)]])
         if self.cmdstate == 2:
             self.ss_field = self.ss
-        if self.cmdstate == 4:
+        if self.cmdstate == last_addr:
             self.es_field = self.es
             self.putf([Ann.FIELD, ['Address: 0x%06x' % self.addr,
                 'Addr: 0x%06x' % self.addr, '0x%06x' % self.addr]])
@@ -266,17 +282,16 @@ class Decoder(srd.Decoder):
 
     def handle_read(self, mosi, miso):
         # Read data bytes: Master asserts CS#, sends READ command, sends
-        # 3-byte address, reads >= 1 data bytes, de-asserts CS#.
+        # address, reads >= 1 data bytes, de-asserts CS#.
         if self.cmdstate == 1:
             # Byte 1: Master sends command ID.
             self.emit_cmd_byte()
-        elif self.cmdstate in (2, 3, 4):
-            # Bytes 2/3/4: Master sends read address (24bits, MSB-first).
+        elif self.cmdstate in self.addr_chunks:
             self.emit_addr_bytes(mosi)
-        elif self.cmdstate >= 5:
-            # Bytes 5-x: Master reads data bytes (until CS# de-asserted).
+        elif self.cmdstate >= self.data_offs:
+            # Bytes ..-x: Master reads data bytes (until CS# de-asserted).
             self.es_field = self.es # Will be overwritten for each byte.
-            if self.cmdstate == 5:
+            if self.cmdstate == self.data_offs:
                 self.ss_field = self.ss
                 self.on_end_transaction = lambda: self.output_data_block('Data', Ann.READ)
             self.data.append(miso)
@@ -284,19 +299,18 @@ class Decoder(srd.Decoder):
 
     def handle_write_common(self, mosi, miso, ann):
         # Write data bytes: Master asserts CS#, sends WRITE command, sends
-        # 3-byte address, writes >= 1 data bytes, de-asserts CS#.
+        # address, writes >= 1 data bytes, de-asserts CS#.
         if self.cmdstate == 1:
             # Byte 1: Master sends command ID.
             self.emit_cmd_byte()
             if self.writestate == 0:
                 self.putc([Ann.WARN, ['Warning: WREN might be missing']])
-        elif self.cmdstate in (2, 3, 4):
-            # Bytes 2/3/4: Master sends write address (24bits, MSB-first).
+        elif self.cmdstate in self.addr_chunks:
             self.emit_addr_bytes(mosi)
-        elif self.cmdstate >= 5:
-            # Bytes 5-x: Master writes data bytes (until CS# de-asserted).
+        elif self.cmdstate >= self.data_offs:
+            # Bytes ..-x: Master writes data bytes (until CS# de-asserted).
             self.es_field = self.es # Will be overwritten for each byte.
-            if self.cmdstate == 5:
+            if self.cmdstate == self.data_offs:
                 self.ss_field = self.ss
                 self.on_end_transaction = lambda: self.output_data_block('Data', ann)
             self.data.append(mosi)
@@ -310,19 +324,18 @@ class Decoder(srd.Decoder):
 
     def handle_fast_read(self, mosi, miso):
         # Fast read: Master asserts CS#, sends FAST READ command, sends
-        # 3-byte address + 1 dummy byte, reads >= 1 data bytes, de-asserts CS#.
+        # address + 1 dummy byte, reads >= 1 data bytes, de-asserts CS#.
         if self.cmdstate == 1:
             # Byte 1: Master sends command ID.
             self.emit_cmd_byte()
-        elif self.cmdstate in (2, 3, 4):
-            # Bytes 2/3/4: Master sends read address (24bits, MSB-first).
+        elif self.cmdstate in self.addr_chunks:
             self.emit_addr_bytes(mosi)
-        elif self.cmdstate == 5:
+        elif self.cmdstate == self.data_offs:
             self.putx([Ann.BIT, ['Dummy byte: 0x%02x' % mosi]])
-        elif self.cmdstate >= 6:
-            # Bytes 6-x: Master reads data bytes (until CS# de-asserted).
+        elif self.cmdstate >= self.data_offs+1:
+            # Bytes ..-x: Master reads data bytes (until CS# de-asserted).
             self.es_field = self.es # Will be overwritten for each byte.
-            if self.cmdstate == 6:
+            if self.cmdstate == self.data_offs+1:
                 self.ss_field = self.ss
                 self.on_end_transaction = lambda: self.output_data_block('Data', Ann.FAST_READ)
             self.data.append(miso)
@@ -333,6 +346,7 @@ class Decoder(srd.Decoder):
         # command, sends 3-byte address + 1 dummy byte, reads >= 1 data bytes,
         # de-asserts CS#. All data after the command is sent via two I/O pins.
         # MOSI = SIO0 = even bits, MISO = SIO1 = odd bits.
+        # TODO - no 2/3 byte address handling here :(
         if self.cmdstate != 1:
             b1, b2 = decode_dual_bytes(mosi, miso)
         if self.cmdstate == 1:
@@ -380,11 +394,10 @@ class Decoder(srd.Decoder):
             self.emit_cmd_byte()
             if self.writestate == 0:
                 self.putx([Ann.WARN, ['Warning: WREN might be missing']])
-        elif self.cmdstate in (2, 3, 4):
-            # Bytes 2/3/4: Master sends sector address (24bits, MSB-first).
+        elif self.cmdstate in self.addr_chunks:
             self.emit_addr_bytes(mosi)
 
-        if self.cmdstate == 4:
+        if self.cmdstate == self.addr_chunks[-1]:
             self.es_cmd = self.es
             d = 'Erase sector %d (0x%06x)' % (self.addr, self.addr)
             self.putc([Ann.SE, [d]])
@@ -410,18 +423,18 @@ class Decoder(srd.Decoder):
             self.putx([Ann.WARN, ['Warning: WREN might be missing']])
 
     def handle_pp(self, mosi, miso):
-        # Page program: Master asserts CS#, sends PP command, sends 3-byte
+        # Page program: Master asserts CS#, sends PP command, sends
         # page address, sends >= 1 data bytes, de-asserts CS#.
         if self.cmdstate == 1:
             # Byte 1: Master sends command ID.
             self.emit_cmd_byte()
-        elif self.cmdstate in (2, 3, 4):
-            # Bytes 2/3/4: Master sends page address (24bits, MSB-first).
+        elif self.cmdstate in self.addr_chunks:
+            # Master sends page address
             self.emit_addr_bytes(mosi)
-        elif self.cmdstate >= 5:
-            # Bytes 5-x: Master sends data bytes (until CS# de-asserted).
+        elif self.cmdstate >= self.data_offs:
+            # Bytes ..-x: Master sends data bytes (until CS# de-asserted).
             self.es_field = self.es # Will be overwritten for each byte.
-            if self.cmdstate == 5:
+            if self.cmdstate == self.data_offs:
                 self.ss_field = self.ss
                 self.on_end_transaction = lambda: self.output_data_block('Data', Ann.PP)
             self.data.append(mosi)
