@@ -19,9 +19,14 @@
 
 from collections import OrderedDict
 
+# Annotations are created from cmds, and can't be changed after the fact, based on chip
+# So we must prefill all plausible flash commands, then override.
+cmds = OrderedDict([(n, ('CMD%02Xh' % n, 'Flash Command 0x%02X' % n)) for n in range(256)])
+
 # OrderedDict which maps command IDs to their names and descriptions.
 # Please keep this sorted by command ID.
-cmds = OrderedDict([
+# FIXME: this contains quite a few vendor specific codepoints
+base_cmds = OrderedDict([
     (0x01, ('WRSR', 'Write status register')),
     (0x02, ('PP', 'Page program')),
     (0x03, ('READ', 'Read data')),
@@ -51,6 +56,7 @@ cmds = OrderedDict([
     (0xd8, ('BE', 'Block erase')),
     (0xef, ('REMS2', 'Read ID for 2x I/O mode')),
 ])
+cmds.update(base_cmds)
 
 device_name = {
     'adesto': {
@@ -69,6 +75,15 @@ device_name = {
         0x13: 'W25Q80DV',
     },
 }
+
+# At least applies to MT25QL512
+cmds_micron = OrderedDict([
+    (0x66, ('RESET_ENABLE', 'Reset Enable')),
+    (0x70, ('RFSR', 'Read Flag status register')),
+    (0x99, ('RESET_MEMORY', 'Reset Memory')),
+    (0xb7, ('ENTER4B', 'Enter 4-Byte addressing mode')),
+    (0xe9, ('EXIT4B', 'Exit 4-Byte addressing mode')),
+])
 
 chips = {
     # Adesto
@@ -168,6 +183,13 @@ chips = {
         'page_size': 256,
         'sector_size': 4 * 1024,
         'block_size': 64 * 1024,
+    },
+    # Micron
+    'micron_mt25ql512': {
+        'vendor': 'Micron',
+        'model': 'MT25QL512',
+        'rdid_id': 0x20ba20,
+        'extra_cmds': cmds_micron,
     },
     # Winbond
     'winbond_w25q80dv': {

@@ -68,6 +68,44 @@ def decode_status_reg(data):
 
     return ret
 
+
+class VendorDecoder:
+    def __init__(self, srd: srd.Decoder, vcmds):
+        """
+        A vendor decoder doesn't _inherit_ the top level decoder, it just has access to it...
+        vcmds are a map of vendor commands...
+        """
+        self.srd = srd
+        self.vcmds = vcmds
+
+        def get_handler(cmd):
+            s = 'vhandle_%s' % vcmds[cmd][0].lower().replace('/', '_')
+            v_default = getattr(self, "default_vhandle", None)
+            if v_default is not None:
+                return getattr(self, s, v_default)
+            else:
+                return getattr(self, s)
+        self.cmd_handlers = dict((cmd, get_handler(cmd)) for cmd in vcmds.keys())
+
+class VendorDecoderMicron(VendorDecoder):
+    def vhandle_rfsr(self, mosi, miso):
+        if self.srd.cmdstate == 1:
+            # Byte 1: Master sends command ID.
+            self.srd.putx([0x70, [self.vcmds[mosi][1], self.vcmds[mosi][0]]])
+        elif self.srd.cmdstate >= 2:
+            # Bytes 2-x: Slave sends status register as long as master clocks.
+            self.srd.putx([Ann.BIT, ["undecoded FIXME"]])
+            self.srd.putx([Ann.FIELD, ['Flag Status register']])
+            self.srd.putx([0x70, ['Flag status value: 0x%02x' % miso, '0x%02x' % miso]])
+        self.srd.cmdstate += 1
+
+    def default_vhandle(self, mosi, miso):
+        """
+        We can use this for simple one commands were the info in the command table is sufficient
+        """
+        self.srd.putx([mosi, [self.vcmds[mosi][1], self.vcmds[mosi][0]]])
+
+
 class Decoder(srd.Decoder):
     api_version = 3
     id = 'spiflash'
@@ -107,13 +145,14 @@ class Decoder(srd.Decoder):
         self.on_end_transaction = None
         self.end_current_transaction()
         self.writestate = 0
+        self.vhandler = None
 
         # Build dict mapping command keys to handler functions. Each
         # command in 'cmds' (defined in lists.py) has a matching
         # handler self.handle_<shortname>.
         def get_handler(cmd):
             s = 'handle_%s' % cmds[cmd][0].lower().replace('/', '_')
-            return getattr(self, s)
+            return getattr(self, s, self.default_handle)
         self.cmd_handlers = dict((cmd, get_handler(cmd)) for cmd in cmds.keys())
 
     def end_current_transaction(self):
@@ -129,6 +168,11 @@ class Decoder(srd.Decoder):
         self.out_ann = self.register(srd.OUTPUT_ANN)
         self.chip = chips[self.options['chip']]
         self.vendor = self.options['chip'].split('_')[0]
+        extra_cmds = self.chip.get('extra_cmds')
+        if extra_cmds:
+            # FIXME - no sure yet how best to have "lists" refer to classes without falling back to strings :|
+            self.vhandler = VendorDecoderMicron(self, extra_cmds)
+
         # Does the chip have a forced, fixed size?
         chip_addr_size = self.chip.get('addr_size')
         opt_addr_size = self.options['addr_size']
@@ -518,6 +562,10 @@ class Decoder(srd.Decoder):
     def handle_dsry(self, mosi, miso):
         pass # TODO
 
+    def default_handle(self, mosi, miso):
+        self.putx([Ann.BIT, ['Unhandled CMD: 0x%02x' % mosi, 'CMD%02xh' % mosi]])
+        self.state = None
+
     def output_data_block(self, label, idx):
         # Print accumulated block of data
         # (called on CS# de-assert via self.on_end_transaction callback).
@@ -547,8 +595,8 @@ class Decoder(srd.Decoder):
             self.cmdstate = 1
 
         # Handle commands.
-        try:
+        # Look for chip specific first...
+        if self.vhandler and self.vhandler.cmd_handlers.get(self.state):
+            self.vhandler.cmd_handlers[self.state](mosi, miso)
+        else:
             self.cmd_handlers[self.state](mosi, miso)
-        except KeyError:
-            self.putx([Ann.BIT, ['Unknown command: 0x%02x' % mosi]])
-            self.state = None
