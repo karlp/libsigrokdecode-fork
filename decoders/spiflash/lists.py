@@ -118,6 +118,11 @@ chips = {
         'sector_size': 4 * 1024,
         'block_size': 64 * 1024,
     },
+    'infineon_fm25v02a': {
+        'vendor': 'Infineon',
+        'model': 'FM25V02A',
+        'rdid_id': 0xc22208,
+    },
     # Macronix
     'macronix_mx25l1605d': {
         'vendor': 'Macronix',

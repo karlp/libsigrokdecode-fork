@@ -184,6 +184,10 @@ class Decoder(srd.Decoder):
         if self.cmdstate == 1:
             # Byte 1: Master sends command ID.
             self.emit_cmd_byte()
+        # Skip forward for continuation characters
+        elif self.cmdstate == 2 and miso == 0x7f:
+            self.putx([Ann.FIELD, ['Extension Byte: 0x7f']])
+            return
         elif self.cmdstate == 2:
             # Byte 2: Slave sends the JEDEC manufacturer ID.
             self.putx([Ann.FIELD, ['Manufacturer ID: 0x%02x' % miso]])
