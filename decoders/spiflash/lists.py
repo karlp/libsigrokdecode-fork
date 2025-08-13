@@ -122,6 +122,7 @@ chips = {
         'vendor': 'Infineon',
         'model': 'FM25V02A',
         'rdid_id': 0xc22208,
+        'addr_size': 2
     },
     # Macronix
     'macronix_mx25l1605d': {
