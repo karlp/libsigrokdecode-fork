@@ -347,16 +347,17 @@ class Decoder(srd.Decoder):
         if self.cmdstate == 1:
             # Byte 1: Master sends command ID.
             self.emit_cmd_byte()
-            if self.writestate == 0:
-                self.putc([Ann.WARN, ['Warning: WREN might be missing']])
         elif self.cmdstate in self.addr_chunks:
             self.emit_addr_bytes(mosi)
         elif self.cmdstate >= self.data_offs:
             # Bytes ..-x: Master writes data bytes (until CS# de-asserted).
             self.es_field = self.es # Will be overwritten for each byte.
             if self.cmdstate == self.data_offs:
+                self.es_cmd = self.ss
                 self.ss_field = self.ss
                 self.on_end_transaction = lambda: self.output_data_block('Data', ann)
+                if self.writestate == 0:
+                    self.putc([Ann.WARN, ['Warning: WREN might be missing']])
             self.data.append(mosi)
         self.cmdstate += 1
 
