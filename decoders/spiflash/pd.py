@@ -366,6 +366,9 @@ class Decoder(srd.Decoder):
     def handle_write2(self, mosi, miso):
         self.handle_write_common(mosi, miso, Ann.WRITE2)
 
+    def handle_pp(self, mosi, miso):
+        self.handle_write_common(mosi, miso, Ann.PP)
+
     def handle_fast_read(self, mosi, miso):
         # Fast read: Master asserts CS#, sends FAST READ command, sends
         # address + 1 dummy byte, reads >= 1 data bytes, de-asserts CS#.
@@ -465,24 +468,6 @@ class Decoder(srd.Decoder):
         self.putx([Ann.CE2, self.cmd_ann_list()])
         if self.writestate == 0:
             self.putx([Ann.WARN, ['Warning: WREN might be missing']])
-
-    def handle_pp(self, mosi, miso):
-        # Page program: Master asserts CS#, sends PP command, sends
-        # page address, sends >= 1 data bytes, de-asserts CS#.
-        if self.cmdstate == 1:
-            # Byte 1: Master sends command ID.
-            self.emit_cmd_byte()
-        elif self.cmdstate in self.addr_chunks:
-            # Master sends page address
-            self.emit_addr_bytes(mosi)
-        elif self.cmdstate >= self.data_offs:
-            # Bytes ..-x: Master sends data bytes (until CS# de-asserted).
-            self.es_field = self.es # Will be overwritten for each byte.
-            if self.cmdstate == self.data_offs:
-                self.ss_field = self.ss
-                self.on_end_transaction = lambda: self.output_data_block('Data', Ann.PP)
-            self.data.append(mosi)
-        self.cmdstate += 1
 
     def handle_cp(self, mosi, miso):
         pass # TODO
