@@ -96,6 +96,7 @@ class FlashChip:
 
 # page/sector/block sizes have never been used in this PD, but keep them for now if people provided them...
 # remsids are relegated to kwargs, largely superseded by jedec rdid...
+# Is rems_id _always_ the jedec device id -1?
 # Uses a "page << 8 | manuf_id" ala memtest86, rather than expanded 7f7f7f style notation ala flashrom
 # however, put in whatever the device _does_ not what it "should" be doing.
 chips_list = [

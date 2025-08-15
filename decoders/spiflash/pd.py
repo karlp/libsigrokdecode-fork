@@ -512,10 +512,22 @@ class Decoder(srd.Decoder):
         elif self.cmdstate == 5:
             # Byte 5: Slave sends device ID.
             self.es_cmd = self.es
-            self.device_id = miso
-            self.putx([Ann.FIELD, ['Device ID: %s' % self.device()]])
-            d = 'Device = %s' % self.vendor_device()
-            self.putc([Ann.RDP_RES, self.cmd_vendor_dev_list()])
+            self.putx([Ann.FIELD, ['Device ID: %02x' % miso]])
+            c_rid = self.chip.opts.get('rems_id')
+            if c_rid:
+                if c_rid == miso:
+                    # TODO can make more positive "match" statement here.
+                    self.putc([Ann.RDP_RES, self.cmd_vendor_dev_list()])
+                else:
+                    self.putc([Ann.WARN, [
+                        "Selected chip %s (%02x) doesn't match seen: %02x, other decoding may be incorrect" %
+                        (self.chip.key(), c_rid, miso),
+                        "REMS Mismatch %s != %s" % (c_rid, miso)
+                        ]])
+            else:
+                self.putc([Ann.WARN, [
+                    "Chip %s has no 'rems_id' listed. Either wrong selection, or bad data" % (self.chip.key())
+                ]])
             self.state = None
         self.cmdstate += 1
 
@@ -523,6 +535,7 @@ class Decoder(srd.Decoder):
         if self.cmdstate == 1:
             # Byte 1: Master sends command ID.
             self.emit_cmd_byte()
+            self.state_rdid = {'manu': None, 'did': None}
         elif self.cmdstate in (2, 3):
             # Bytes 2/3: Master sends two dummy bytes.
             self.putx([Ann.FIELD, ['Dummy byte: 0x%02x' % mosi]])
@@ -535,20 +548,47 @@ class Decoder(srd.Decoder):
             self.putx([Ann.FIELD, ['Master wants %s ID first' % d]])
         elif self.cmdstate == 5:
             # Byte 5: Slave sends manufacturer ID (or device ID).
-            self.ids = [miso]
-            d = 'Manufacturer' if self.manufacturer_id_first else 'Device'
-            self.putx([Ann.FIELD, ['%s ID: 0x%02x' % (d, miso)]])
+            #self.ids = [miso]
+            if self.manufacturer_id_first:
+                self.state_rdid['manu'] = miso
+                fn = 'Manufacturer'
+            else:
+                self.state_rdid['did'] = miso
+                fn = 'Device'
+            self.putx([Ann.FIELD, ['%s ID: 0x%02x' % (fn, miso)]])
         elif self.cmdstate == 6:
             # Byte 6: Slave sends device ID (or manufacturer ID).
-            self.ids.append(miso)
-            d = 'Device' if self.manufacturer_id_first else 'Manufacturer'
-            self.putx([Ann.FIELD, ['%s ID: 0x%02x' % (d, miso)]])
+            #self.ids.append(miso)
+            if self.manufacturer_id_first:
+                self.state_rdid['did'] = miso
+                fn = 'Device'
+            else:
+                self.state_rdid['manu'] = miso
+                fn = 'Manufacturer'
+            self.putx([Ann.FIELD, ['%s ID: 0x%02x' % (fn, miso)]])
 
         if self.cmdstate == 6:
-            id_ = self.ids[1] if self.manufacturer_id_first else self.ids[0]
-            self.device_id = id_
+            #id_ = self.ids[1] if self.manufacturer_id_first else self.ids[0]
+            #self.device_id = id_
             self.es_cmd = self.es
-            self.putc([Ann.REMS, self.cmd_vendor_dev_list()])
+            # rems gives both manufacturer and remsid, so you need both the jedec manuf, + the "remsid"
+            c_rid = self.chip.opts.get('rems_id')
+            if self.chip.has_ids() and c_rid:
+                c_manu = self.chip.jedec_manu & 0xff
+                seen_manu = self.state_rdid['manu']
+                seen_did = self.state_rdid['did']
+                if c_manu == seen_manu and c_rid == seen_did:
+                    self.putc([Ann.REMS, self.cmd_vendor_dev_list()])
+                else:
+                    self.putc([Ann.WARN, [
+                        "Selected chip %s (%02x:%02x) doesn't match seen: %02x:%02x, other decoding may be incorrect" %
+                        (self.chip.key(), c_manu, c_rid, seen_manu, seen_did),
+                        "REMS Mismatch %02x:%02x != %02x:%02x" % (c_manu, c_rid, seen_manu, seen_did)
+                        ]])
+            else:
+                self.putc([Ann.WARN, [
+                    "Chip %s has no 'rems_id' listed. Either wrong selection, or bad data" % (self.chip.key())
+                ]])
             self.state = None
         else:
             self.cmdstate += 1
