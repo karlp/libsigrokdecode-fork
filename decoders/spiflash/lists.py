@@ -58,24 +58,6 @@ base_cmds = OrderedDict([
 ])
 cmds.update(base_cmds)
 
-device_name = {
-    'adesto': {
-        0x00: 'AT45Dxxx family, standard series',
-    },
-    'fidelix': {
-        0x15: 'FM25Q32',
-    },
-    'macronix': {
-        0x13: 'MX25L8006',
-        0x14: 'MX25L1605D',
-        0x15: 'MX25L3205D',
-        0x16: 'MX25L6405D',
-    },
-    'winbond': {
-        0x13: 'W25Q80DV',
-    },
-}
-
 # At least applies to MT25QL512
 cmds_micron = OrderedDict([
     (0x66, ('RESET_ENABLE', 'Reset Enable')),
@@ -85,7 +67,52 @@ cmds_micron = OrderedDict([
     (0xe9, ('EXIT4B', 'Exit 4-Byte addressing mode')),
 ])
 
-chips = {
+class FlashChip:
+    def __init__(self, vendor, model, jedec_manu=None, deviceid=None, write_enable=None, **kwargs):
+        self.vendor = vendor
+        self.model = model
+        self.jedec_manu = jedec_manu
+        self.deviceid = deviceid
+        self.write_enable = write_enable
+        # known: addr_size and extra_cmds ...
+        self.opts = kwargs
+
+    def key(self):
+        return "%s_%s" % (self.vendor, self.model)
+
+    def idstr(self):
+        if self.has_ids():
+            return "%04x:%04x" % (self.jedec_manu, self.deviceid)
+        return "<no ID>"
+
+    def has_ids(self):
+        return self.jedec_manu is not None and self.deviceid is not None
+
+    def matches(self, manu, devid):
+        return self.has_ids() and self.jedec_manu == manu and self.deviceid == devid
+
+    def __repr__(self):
+        return "FlashChip<%s_%s>" % (self.vendor, self.model)
+
+# page/sector/block sizes have never been used in this PD, but keep them for now if people provided them...
+# remsids are relegated to kwargs, largely superseded by jedec rdid...
+# Uses a "page << 8 | manuf_id" ala memtest86, rather than expanded 7f7f7f style notation ala flashrom
+# however, put in whatever the device _does_ not what it "should" be doing.
+chips_list = [
+    FlashChip("Adesto", "AT45DB161E", jedec_manu=0x001f, deviceid=0x2600, write_enable=False, sz_p=528, sz_s=128*1024, sz_b=4*1024),
+    FlashChip("Atmel", "AT25xx", sz_p=64),
+    FlashChip("Fidelix", "FM25Q32", jedec_manu=0x07a1, deviceid=0x4016, sz_p=256, sz_s=4*1024, sz_b=64*1024, rems_id=0x15),
+    FlashChip("Infineon", "FM25V02A", jedec_manu=0x06c2, deviceid=0x2208, addr_size=2),
+    FlashChip("Macronix", "MX25L8006", jedec_manu=0x00c2, deviceid=0x2014, sz_p=256, sz_s=4*1024, sz_b=64*1024, rems_id=0x13),
+    FlashChip("Macronix", "MX25L1605D", jedec_manu=0x00c2, deviceid=0x2015, sz_p=256, sz_s=4*1024, sz_b=64*1024, rems_id=0x14),
+    FlashChip("Macronix", "MX25L3205D", jedec_manu=0x00c2, deviceid=0x2016, sz_p=256, sz_s=4*1024, sz_b=64*1024, rems_id=0x15),
+    FlashChip("Macronix", "MX25L6405D", jedec_manu=0x00c2, deviceid=0x2017, sz_p=256, sz_s=4*1024, sz_b=64*1024, rems_id=0x16),
+    FlashChip("Micron", "MT25QL512", jedec_manu=0x0020, deviceid=0xba20, extra_cmds=cmds_micron),
+    FlashChip("Winbond", "W25Q80DV", jedec_manu=0x00ef, deviceid=0x4014, sz_p=256, sz_s=4*1024, sz_b=64*1024, rems_id=0x13),
+]
+chips = {chip.key(): chip for chip in chips_list}
+
+chips_legacy = {
     # Adesto
     'adesto_at45db161e': {
         'vendor': 'Adesto',

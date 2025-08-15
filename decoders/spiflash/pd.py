@@ -146,6 +146,7 @@ class Decoder(srd.Decoder):
         self.end_current_transaction()
         self.writestate = 0
         self.vhandler = None
+        self.state_rdid = None
 
         # Build dict mapping command keys to handler functions. Each
         # command in 'cmds' (defined in lists.py) has a matching
@@ -167,14 +168,14 @@ class Decoder(srd.Decoder):
     def start(self):
         self.out_ann = self.register(srd.OUTPUT_ANN)
         self.chip = chips[self.options['chip']]
-        self.vendor = self.options['chip'].split('_')[0]
-        extra_cmds = self.chip.get('extra_cmds')
+        self.vendor = self.chip.vendor
+        extra_cmds = self.chip.opts.get('extra_cmds')
         if extra_cmds:
             # FIXME - no sure yet how best to have "lists" refer to classes without falling back to strings :|
             self.vhandler = VendorDecoderMicron(self, extra_cmds)
 
         # Does the chip have a forced, fixed size?
-        chip_addr_size = self.chip.get('addr_size')
+        chip_addr_size = self.chip.opts.get('addr_size')
         opt_addr_size = self.options['addr_size']
         if opt_addr_size == -1 and chip_addr_size is None:
             self.addr_size = 3
@@ -196,11 +197,8 @@ class Decoder(srd.Decoder):
     def putc(self, data):
         self.put(self.ss_cmd, self.es_cmd, self.out_ann, data)
 
-    def device(self):
-        return device_name[self.vendor].get(self.device_id, 'Unknown')
-
     def vendor_device(self):
-        return '%s %s' % (self.chip['vendor'], self.device())
+        return '%s %s' % (self.chip.vendor, self.chip.model)
 
     def cmd_ann_list(self):
         x, s = cmds[self.state][0], cmds[self.state][1]
@@ -244,24 +242,50 @@ class Decoder(srd.Decoder):
         if self.cmdstate == 1:
             # Byte 1: Master sends command ID.
             self.emit_cmd_byte()
+            self.state_rdid = {'exbytes': 0, 'manu': None, 'dtype': None, 'did': None}
         # Skip forward for continuation characters
         elif self.cmdstate == 2 and miso == 0x7f:
             self.putx([Ann.FIELD, ['Extension Byte: 0x7f']])
+            self.state_rdid['exbytes'] += 1
             return
         elif self.cmdstate == 2:
             # Byte 2: Slave sends the JEDEC manufacturer ID.
             self.putx([Ann.FIELD, ['Manufacturer ID: 0x%02x' % miso]])
+            self.state_rdid['manu'] = miso
         elif self.cmdstate == 3:
             # Byte 3: Slave sends the memory type.
             self.putx([Ann.FIELD, ['Memory type: 0x%02x' % miso]])
+            self.state_rdid['dtype'] = miso
         elif self.cmdstate == 4:
             # Byte 4: Slave sends the device ID.
-            self.device_id = miso
             self.putx([Ann.FIELD, ['Device ID: 0x%02x' % miso]])
+            self.state_rdid['did'] = miso
 
         if self.cmdstate == 4:
             self.es_cmd = self.es
-            self.putc([Ann.RDID, self.cmd_vendor_dev_list()])
+            seen_manu = self.state_rdid['exbytes'] << 8 | self.state_rdid['manu']
+            seen_devid = self.state_rdid['dtype'] << 8 | self.state_rdid['did']
+            # four cases
+            # * specified chip has an ID, and it matches, (show, no warn)
+            # * specified chip has an ID and it _doesn't_ match -> warn
+            # * specified chip does not have an ID, but we got one anyway (show what was seen, warn about bad data)
+            # * specified chip does not have an ID -> we shouldn't get here...
+            seen_id = "%04x:%04x" % (seen_manu, seen_devid)
+            if self.chip.has_ids():
+                if self.chip.matches(seen_manu, seen_devid):
+                    # TODO can make more positive "match" statement here.
+                    self.putc([Ann.RDID, self.cmd_vendor_dev_list()])
+                else:
+                    self.putc([Ann.WARN, [
+                        "Selected chip %s (%s) doesn't match seen: %s, other decoding may be incorrect" %
+                        (self.chip.key(), self.chip.idstr(), seen_id),
+                        "RDID Mismatch %s != %s" % (self.chip.idstr(), seen_id)
+                        ]])
+            else:
+                # Either missing data for the chip selected, or wrong chip selected
+                self.putc([Ann.WARN, [
+                    "Chip %s has no IDs listed. Either wrong selection, or bad data" % (self.chip.key())
+                    ]])
             self.state = None
         else:
             self.cmdstate += 1
