@@ -260,8 +260,6 @@ class Decoder(srd.Decoder):
             # Byte 4: Slave sends the device ID.
             self.putx([Ann.FIELD, ['Device ID: 0x%02x' % miso]])
             self.state_rdid['did'] = miso
-
-        if self.cmdstate == 4:
             self.es_cmd = self.es
             seen_manu = self.state_rdid['exbytes'] << 8 | self.state_rdid['manu']
             seen_devid = self.state_rdid['dtype'] << 8 | self.state_rdid['did']
@@ -286,9 +284,13 @@ class Decoder(srd.Decoder):
                 self.putc([Ann.WARN, [
                     "Chip %s has no IDs listed. Either wrong selection, or bad data" % (self.chip.key())
                     ]])
-            self.state = None
-        else:
-            self.cmdstate += 1
+        elif self.cmdstate == 5:
+            # Optionally, you can keep clocking, and receive N bytes of EDI.
+            # First byte says how much more to expect...
+            self.putx([Ann.FIELD, ['EDI Length: %0d' % miso]])
+        elif self.cmdstate > 5:
+            self.putx([Ann.FIELD, ['Unhandled EDI: 0x%02x' % miso]])
+        self.cmdstate += 1
 
     def handle_rdsr(self, mosi, miso):
         # Read status register: Master asserts CS#, sends RDSR command,
