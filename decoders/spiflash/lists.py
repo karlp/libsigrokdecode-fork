@@ -99,6 +99,7 @@ class FlashChip:
 # Uses a "page << 8 | manuf_id" ala memtest86, rather than expanded 7f7f7f style notation ala flashrom
 # however, put in whatever the device _does_ not what it "should" be doing.
 chips_list = [
+    FlashChip("Adesto", "AT25SF041", jedec_manu=0x001f, deviceid=0x8401),
     FlashChip("Adesto", "AT45DB161E", jedec_manu=0x001f, deviceid=0x2600, write_enable=False, sz_p=528, sz_s=128*1024, sz_b=4*1024),
     FlashChip("Atmel", "AT25xx", sz_p=64),
     FlashChip("Fidelix", "FM25Q32", jedec_manu=0x07a1, deviceid=0x4016, sz_p=256, sz_s=4*1024, sz_b=64*1024, rems_id=0x15),
